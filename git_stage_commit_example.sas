@@ -20,6 +20,7 @@ data _null_;
 	rc=git_index_add("&repopath", "git_clone_sas_dummy_blog.sas", "New");
 	rc=git_index_add("&repopath", "git_stage_commit_example.sas", "New");
 	rc=git_index_add("&repopath", "git_push_example.sas", "New");
+		rc=git_index_add("&repopath", "git_branch_new.sas", "New");
 
 	/*2*/
 	rc=git_status_free("&repopath");
