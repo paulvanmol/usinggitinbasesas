@@ -1,157 +1,85 @@
-%macro git_discover_sas_files(repopath=);
+options mprint mlogic symbolgen; 
+%macro git_stage_recursive(repopath=, dir=, author=, email=, message=) / minoperator;
+  %local fileref rc did n memname didc relpath;
 
-  /* Initialize the file results table and directory queue */
-  data _sasfiles;
-    length filename $ 512;
-    stop;
-  run;
-
-  data _dirqueue;
-    length dirpath $ 512;
-    dirpath = "&repopath";
-    output;
-  run;
-
-  /* Process directories until the queue is empty */
-  %let dirs_remaining = 1;
-
-  %do %while(&dirs_remaining > 0);
-
-    /* Grab the first directory from the queue */
+  /* On first call, open git status */
+  %if %superq(dir) = %then %do;
+    %let dir = &repopath;
     data _null_;
-      set _dirqueue(obs=1);
-      call symputx('current_dir', dirpath);
+      n = git_status("&repopath");
+      put "git_status n=" n;
     run;
-
-    /* Remove it from the queue */
-    data _dirqueue;
-      set _dirqueue(firstobs=2);
-    run;
-
-    /* Scan current directory */
-    filename _curdir "&current_dir";
-
-    data _scan_results;
-      length filename $ 512 dirpath $ 512 entry $ 256;
-      did = dopen("_curdir");
-
-      if did = 0 then do;
-        put "WARNING: Could not open directory &current_dir";
-        stop;
-      end;
-
-      nentries = dnum(did);
-
-      do i = 1 to nentries;
-        entry = dread(did, i);
-
-        /* Skip hidden files and . / .. */
-        if entry =: "." then continue;
-
-        /* Build full path */
-        fullpath = cats("&current_dir", "/", entry);
-
-        /* Check if it is a subdirectory by trying to DOPEN it */
-        length subref $ 8;
-        subref = "tmpref";
-        filename tmpref (fullpath);  /* NOT portable — use fileref trick below */
-
-        /* Determine if directory: assign fileref and test */
-        rc_sub = filename(subref, fullpath);
-        sub_did = dopen(subref);
-
-        if sub_did > 0 then do;
-          /* It's a directory — add to queue */
-          dirpath = fullpath;
-          output _dirqueue;
-          rc2 = dclose(sub_did);
-        end;
-        else do;
-          /* It's a file — check extension */
-          if length(entry) > 4
-            and lowcase(substr(entry, length(entry)-3)) = ".sas" then do;
-            filename = fullpath;
-            output _sasfiles;
-          end;
-        end;
-
-        rc3 = filename(subref, "");  /* clear the temp fileref */
-      end;
-
-      rc4 = dclose(did);
-      drop did nentries i entry fullpath subref rc: sub_did dirpath;
-    run;
-
-    filename _curdir clear;
-
-    /* Check if queue still has entries */
-    proc sql noprint;
-      select count(*) into :dirs_remaining trimmed from _dirqueue;
-    quit;
-
   %end;
 
-%mend git_discover_sas_files;
-%macro git_stage_commit_all(repopath=, author=, email=, message=);
+  /* Assign fileref and open directory */
+  %let rc  = %sysfunc(filename(fileref, &dir));
+  %let did = %sysfunc(dopen(&fileref));
 
-  /* 1. Discover all .sas files recursively */
-  %git_discover_sas_files(repopath=&repopath);
-
-  %let filecount = 0;
-  proc sql noprint;
-    select count(*) into :filecount trimmed from _sasfiles;
-  quit;
-  %put INFO: Found &filecount .sas file(s) to stage across all subdirectories.;
-
-  %if &filecount = 0 %then %do;
-    %put WARNING: No .sas files found under &repopath — nothing staged or committed.;
+  %if &did = 0 %then %do;
+    %put ERROR: Could not open directory &dir;
     %return;
   %end;
 
-  /* 2. Open git status */
-  data _null_;
-    n = git_status("&repopath");
-    put "git_status n=" n;
-  run;
+  /* Loop through all entries */
+  %do n = 1 %to %sysfunc(dnum(&did));
+    %let memname = %sysfunc(dread(&did, &n));
 
-  /* 3. Stage each file — path must be relative to repo root */
-  data _null_;
-    set _sasfiles;
-    /* Strip the repopath prefix to get the relative path */
-    length relpath $ 512;
-    relpath = substr(filename, length("&repopath") + 2);  /* +2 for the slash */
-    rc = git_index_add("&repopath", trim(relpath), "New");
-    put relpath= rc=;
-  run;
+    /* Skip hidden entries and .git folder */
+    %if %qsubstr(&memname,1,1) = . %then %goto next;
 
-  /* 4. Refresh status */
-  data _null_;
-    rc = git_status_free("&repopath");
-    n  = git_status("&repopath");
-    put "git_status after staging n=" n;
-  run;
+    %if %upcase(%qscan(&memname,-1,.)) = SAS %then %do;
+      /* It's a .sas file — build relative path and stage it */
+      %let relpath = %sysfunc(substr(&dir/&memname,
+                       %eval(%length(&repopath) + 2)));
+      data _null_;
+        rc = git_index_add(
+               "&repopath",
+               "&relpath",
+               "New");
+        put "Staged: &relpath rc=" rc;
+      run;
+    %end;
+    %else %if %qscan(&memname,2,.) = %then %do;
+      /* No extension — treat as subdirectory, recurse */
+      %git_stage_recursive(
+        repopath = &repopath,
+        dir      = &dir/&memname,
+        author   = &author,
+        email    = &email,
+        message  = &message);
+    %end;
 
-  /* 5. Commit */
-  data _null_;
-    rc = git_commit(
-      "&repopath",
-      "HEAD",
-      "&author",
-      "&email",
-      "&message");
-    put rc=;
-  run;
+    %next:
+  %end;
 
-  /* 6. Cleanup */
-  proc datasets lib=work nolist;
-    delete _sasfiles _dirqueue;
-  quit;
+  /* Close directory */
+  %let didc = %sysfunc(dclose(&did));
+  %let rc   = %sysfunc(filename(fileref));
 
-%mend git_stage_commit_all;
+  /* On return to top-level call, commit */
+  %if %superq(dir) = %superq(repopath) %then %do;
+    data _null_;
+      rc = git_status_free("&repopath");
+      n  = git_status("&repopath");
+      put "git_status after staging n=" n;
+    run;
+
+    data _null_;
+      rc = git_commit(
+             "&repopath",
+             "HEAD",
+             "&author",
+             "&email",
+             "&message");
+      put "git_commit rc=" rc;
+    run;
+  %end;
+
+%mend git_stage_recursive;
 
 
 /* Example call */
-%git_stage_commit_all(
+%git_stage_recursive(
   repopath = d:/workshop/usinggitinbasesas2,
   author   = paulvanmol,
   email    = paul.van.mol@gmail.com,
