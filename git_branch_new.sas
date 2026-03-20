@@ -1,3 +1,4 @@
+/*Returns the number of commit objects that are associated with the local repository.*/
 data _null_;
  n = git_commit_log("&repopath");      /*1*/
  put n=;                                      /*2*/
