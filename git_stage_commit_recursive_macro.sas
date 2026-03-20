@@ -1,4 +1,5 @@
-options mprint mlogic symbolgen; 
+*options mprint mlogic symbolgen; 
+options nomprint nomlogic nosymbolgen; 
 %macro git_stage_recursive(repopath=, dir=, author=, email=, message=) / minoperator;
   %local fileref rc did n memname didc relpath;
 

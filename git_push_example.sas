@@ -1,4 +1,5 @@
 /*Create a macrovariable %let mygitpw=*/
+options nosymbolgen; 
 %let repopath=d:/workshop/usinggitinbasesas2;
 data _null_;
  rc= git_push(                    /*1*/
