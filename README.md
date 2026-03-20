@@ -12,4 +12,4 @@ Advanced Examples:
 - git_branch_new()
 - git_branch_chkout()
 - git_rebase(), git_rebase_op() in case there are conflicts
-- git_stash(), git_stash_op, git_stash
+- git_stash(), git_stash_pop(), git_stash_apply(), git_stash_drop()
