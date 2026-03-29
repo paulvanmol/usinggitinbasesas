@@ -1,5 +1,5 @@
 /*Create a new local repository*/
-%let repopath=d:/workshop/usinggitinbasesas;
+%let repopath=d:/workshop/mygitclone;
 /*create directory for path*/ 
 options dlcreatedir; 
 libname repo "&repopath"; 
@@ -16,6 +16,6 @@ run;
 data _null_;
    rc = git_set_url(
     "&repopath",
-    "https://github.com/paulvanmol/usinggitinbasesas");
+    "https://github.com/paulvanmol/usingGitinSASStudio");
 put rc=;
 run;
